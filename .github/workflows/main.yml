@@ -24,23 +24,33 @@ jobs:
           flutter-version: '3.24.0'
           channel: 'stable'
 
-      # Tes sources actuelles sont à la racine ; on les met de côté
-      - name: Stash app sources
+      - name: Diagnose repo layout
         run: |
-          mv main.dart _main.dart
-          mv pubspec.yaml _pubspec.yaml
+          echo "== PWD ==" && pwd
+          echo "== Tree (top) ==" && ls -la
+          echo "== lib dir ==" && ls -la lib || true
+          echo "== android dir ==" && ls -la android || true
 
-      # Crée le squelette Flutter (android/, ios/, lib/, etc.)
-      - name: Create Flutter skeleton
-        run: flutter create .
-
-      # Restaure tes fichiers dans la bonne structure
-      - name: Restore sources into skeleton
+      # Si le squelette Flutter n'existe pas, on le crée puis on restaure tes fichiers.
+      - name: Ensure Flutter skeleton exists
         run: |
-          mv _main.dart lib/main.dart
-          mv _pubspec.yaml pubspec.yaml
+          set -eux
+          if [ ! -d "android" ]; then
+            # Met de côté tes fichiers si présents à la racine
+            [ -f "main.dart" ] && mv -f main.dart _main.dart || true
+            [ -f "pubspec.yaml" ] && mv -f pubspec.yaml _pubspec.yaml || true
+            flutter create .
+            # Restaure dans la bonne structure
+            [ -f "_main.dart" ] && mv -f _main.dart lib/main.dart || true
+            [ -f "_pubspec.yaml" ] && mv -f _pubspec.yaml pubspec.yaml || true
+          fi
+          # Affiche l'état final
+          echo "== After skeleton =="
+          ls -la
+          ls -la lib
+          ls -la android
 
-      - name: Get packages
+      - name: Flutter pub get
         run: flutter pub get
 
       - name: Build APK (release)

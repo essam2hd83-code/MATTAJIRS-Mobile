@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      JAVA_TOOL_OPTIONS: -Xmx4g
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,34 +30,26 @@ jobs:
         run: |
           echo "== TOP ==" && ls -la || true
 
-      # Sauvegarder tes fichiers (au cas où)
+      # Sauvegarde éventuelle des sources à la racine
       - name: Stash sources if present
         run: |
           [ -f "main.dart" ] && mv -f main.dart _main.dart || true
           [ -f "pubspec.yaml" ] && mv -f pubspec.yaml _pubspec.yaml || true
 
-      # Créer un projet Flutter NEUF dans un sous-dossier pour éviter les conflits
+      # Crée un projet Flutter propre en sous-dossier puis remonte-le
       - name: Create fresh Flutter app in subdir
         run: |
           flutter create app
-          echo "== app/ created =="
-          ls -la app
-
-      # Remonter le squelette au niveau racine
-      - name: Move app skeleton to root
-        run: |
           shopt -s dotglob
           mv -f app/* .
           rmdir app
-          echo "== After move to root =="
-          ls -la
 
-      # Remettre tes fichiers par-dessus (si tu les avais au dépôt)
+      # Restaure tes fichiers par-dessus le squelette
       - name: Restore your sources
         run: |
           [ -f "_main.dart" ] && mv -f _main.dart lib/main.dart || true
           [ -f "_pubspec.yaml" ] && mv -f _pubspec.yaml pubspec.yaml || true
-          echo "== Final tree =="
+          echo "== After restore =="
           ls -la
           ls -la lib
           ls -la android
@@ -63,11 +57,27 @@ jobs:
       - name: Flutter pub get
         run: flutter pub get
 
-      - name: Build APK (release)
-        run: flutter build apk --release
+      # Accepte les licences Android SDK (nécessaire sur runner GitHub)
+      - name: Accept Android licenses
+        run: yes | "$ANDROID_HOME/tools/bin/sdkmanager" --licenses || true
+
+      # S'assure que la permission INTERNET est bien présente (utile pour WebView)
+      - name: Ensure INTERNET permission
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          if ! grep -q 'android.permission.INTERNET' "$MANIFEST"; then
+            awk '1; /<uses-sdk>/ && !x {print "    <uses-permission android:name=\"android.permission.INTERNET\"/>"; x=1}' "$MANIFEST" > tmp.xml && mv tmp.xml "$MANIFEST"
+          fi
+          echo "== Manifest =="
+          sed -n '1,120p' "$MANIFEST"
+
+      # Build en appelant Gradle directement, logs détaillés
+      - name: Build APK (release) via Gradle
+        working-directory: android
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: mattajirs-app-release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: android/app/build/outputs/apk/release/app-release.apk

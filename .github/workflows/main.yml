@@ -26,26 +26,36 @@ jobs:
 
       - name: Diagnose repo layout
         run: |
-          echo "== PWD ==" && pwd
-          echo "== Tree (top) ==" && ls -la
-          echo "== lib dir ==" && ls -la lib || true
-          echo "== android dir ==" && ls -la android || true
+          echo "== TOP ==" && ls -la || true
 
-      # Si le squelette Flutter n'existe pas, on le crée puis on restaure tes fichiers.
-      - name: Ensure Flutter skeleton exists
+      # Sauvegarder tes fichiers (au cas où)
+      - name: Stash sources if present
         run: |
-          set -eux
-          if [ ! -d "android" ]; then
-            # Met de côté tes fichiers si présents à la racine
-            [ -f "main.dart" ] && mv -f main.dart _main.dart || true
-            [ -f "pubspec.yaml" ] && mv -f pubspec.yaml _pubspec.yaml || true
-            flutter create .
-            # Restaure dans la bonne structure
-            [ -f "_main.dart" ] && mv -f _main.dart lib/main.dart || true
-            [ -f "_pubspec.yaml" ] && mv -f _pubspec.yaml pubspec.yaml || true
-          fi
-          # Affiche l'état final
-          echo "== After skeleton =="
+          [ -f "main.dart" ] && mv -f main.dart _main.dart || true
+          [ -f "pubspec.yaml" ] && mv -f pubspec.yaml _pubspec.yaml || true
+
+      # Créer un projet Flutter NEUF dans un sous-dossier pour éviter les conflits
+      - name: Create fresh Flutter app in subdir
+        run: |
+          flutter create app
+          echo "== app/ created =="
+          ls -la app
+
+      # Remonter le squelette au niveau racine
+      - name: Move app skeleton to root
+        run: |
+          shopt -s dotglob
+          mv -f app/* .
+          rmdir app
+          echo "== After move to root =="
+          ls -la
+
+      # Remettre tes fichiers par-dessus (si tu les avais au dépôt)
+      - name: Restore your sources
+        run: |
+          [ -f "_main.dart" ] && mv -f _main.dart lib/main.dart || true
+          [ -f "_pubspec.yaml" ] && mv -f _pubspec.yaml pubspec.yaml || true
+          echo "== Final tree =="
           ls -la
           ls -la lib
           ls -la android

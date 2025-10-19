@@ -44,26 +44,20 @@ jobs:
         run: |
           [ -f "_main.dart" ] && mv -f _main.dart lib/main.dart || true
           [ -f "_pubspec.yaml" ] && mv -f _pubspec.yaml pubspec.yaml || true
-          echo "== Tree =="
-          ls -la
-          ls -la lib
-          ls -la android
+          ls -la; ls -la lib; ls -la android
 
       - name: Flutter pub get
         run: flutter pub get
 
-      # Installe explicitement les composants SDK nécessaires
       - name: Install Android SDK components
         run: |
           SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
           yes | "${SDKMANAGER}" --licenses
           yes | "${SDKMANAGER}" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
-      # S'assure que gradlew est exécutable
       - name: Ensure gradlew is executable
         run: chmod +x android/gradlew
 
-      # (Optionnel mais utile pour WebView)
       - name: Ensure INTERNET permission
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
@@ -72,13 +66,11 @@ jobs:
           fi
           sed -n '1,120p' "$MANIFEST"
 
-      # 1. Build debug pour diagnostiquer rapidement
       - name: Build APK (debug)
-        run: flutter build apk --debug --stacktrace
+        run: flutter build apk --debug -v
 
-      # 2. Puis build release
       - name: Build APK (release)
-        run: flutter build apk --release --stacktrace
+        run: flutter build apk --release -v
 
       - name: Upload APK artifact (release)
         uses: actions/upload-artifact@v4

@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       JAVA_TOOL_OPTIONS: -Xmx4g
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,46 +27,48 @@ jobs:
           flutter-version: '3.24.0'
           channel: stable
 
+      # Si ton dépôt contient main.dart / pubspec.yaml à la racine, on les met de côté
       - name: Stash sources if present
         run: |
           [ -f "main.dart" ] && mv -f main.dart _main.dart || true
           [ -f "pubspec.yaml" ] && mv -f pubspec.yaml _pubspec.yaml || true
 
+      # Crée un projet Flutter propre en sous-dossier pour éviter les conflits
       - name: Create fresh Flutter app in subdir
         run: flutter create app
 
+      # Remonte le squelette au niveau racine
       - name: Move app skeleton to root
         run: |
           shopt -s dotglob
           mv -f app/* .
           rmdir app
 
+      # Restaure tes fichiers (s’ils existaient) par-dessus le squelette
       - name: Restore your sources
         run: |
           [ -f "_main.dart" ] && mv -f _main.dart lib/main.dart || true
           [ -f "_pubspec.yaml" ] && mv -f _pubspec.yaml pubspec.yaml || true
-          ls -la; ls -la lib; ls -la android
+          echo "== Tree =="
+          ls -la
+          ls -la lib
+          ls -la android
 
       - name: Flutter pub get
         run: flutter pub get
 
+      # Installe explicitement les composants Android SDK requis
       - name: Install Android SDK components
         run: |
           SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
           yes | "${SDKMANAGER}" --licenses
           yes | "${SDKMANAGER}" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
+      # S'assure que gradlew est exécutable
       - name: Ensure gradlew is executable
         run: chmod +x android/gradlew
 
-      - name: Ensure INTERNET permission
-        run: |
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if ! grep -q 'android.permission.INTERNET' "$MANIFEST"; then
-            awk '1; /<application>/ && !x {print "    <uses-permission android:name=\"android.permission.INTERNET\"/>"; x=1}' "$MANIFEST" > tmp.xml && mv tmp.xml "$MANIFEST"
-          fi
-          sed -n '1,120p' "$MANIFEST"
-
+      # Build debug (diagnostic), puis release
       - name: Build APK (debug)
         run: flutter build apk --debug -v
 

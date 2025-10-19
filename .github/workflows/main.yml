@@ -1,4 +1,52 @@
-- name: Flutter pub get
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, principal, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      JAVA_TOOL_OPTIONS: -Xmx4g
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: stable
+
+      - name: Stash sources if present
+        run: |
+          [ -f "main.dart" ] && mv -f main.dart _main.dart || true
+          [ -f "pubspec.yaml" ] && mv -f pubspec.yaml _pubspec.yaml || true
+
+      - name: Create fresh Flutter app in subdir
+        run: flutter create app
+
+      - name: Move app skeleton to root
+        run: |
+          shopt -s dotglob
+          mv -f app/* .
+          rmdir app
+
+      - name: Restore your sources
+        run: |
+          [ -f "_main.dart" ] && mv -f _main.dart lib/main.dart || true
+          [ -f "_pubspec.yaml" ] && mv -f _pubspec.yaml pubspec.yaml || true
+          ls -la; ls -la lib; ls -la android
+
+      - name: Flutter pub get
         run: flutter pub get
 
       - name: Install Android SDK components
@@ -9,6 +57,14 @@
 
       - name: Ensure gradlew is executable
         run: chmod +x android/gradlew
+
+      - name: Ensure INTERNET permission
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          if ! grep -q 'android.permission.INTERNET' "$MANIFEST"; then
+            awk '1; /<application>/ && !x {print "    <uses-permission android:name=\"android.permission.INTERNET\"/>"; x=1}' "$MANIFEST" > tmp.xml && mv tmp.xml "$MANIFEST"
+          fi
+          sed -n '1,120p' "$MANIFEST"
 
       - name: Build APK (debug)
         run: flutter build apk --debug -v

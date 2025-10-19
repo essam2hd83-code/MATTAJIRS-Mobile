@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Android APK (with full logs)
 
 on:
   workflow_dispatch:
@@ -10,72 +10,90 @@ jobs:
     runs-on: ubuntu-latest
     env:
       JAVA_TOOL_OPTIONS: -Xmx4g
+      GRADLE_OPTS: -Dorg.gradle.jvmargs="-Xmx4096m -Dfile.encoding=UTF-8"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Java
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Flutter
+      - name: Setup Flutter stable
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.24.0'
           channel: stable
 
-      # Si ton dépôt contient main.dart / pubspec.yaml à la racine, on les met de côté
+      # Si tu avais main.dart / pubspec.yaml à la racine, on les garde puis on recrée un projet propre
       - name: Stash sources if present
         run: |
           [ -f "main.dart" ] && mv -f main.dart _main.dart || true
           [ -f "pubspec.yaml" ] && mv -f pubspec.yaml _pubspec.yaml || true
 
-      # Crée un projet Flutter propre en sous-dossier pour éviter les conflits
-      - name: Create fresh Flutter app in subdir
+      - name: Create fresh Flutter app
         run: flutter create app
 
-      # Remonte le squelette au niveau racine
-      - name: Move app skeleton to root
+      - name: Move skeleton to repo root
         run: |
           shopt -s dotglob
           mv -f app/* .
           rmdir app
 
-      # Restaure tes fichiers (s’ils existaient) par-dessus le squelette
       - name: Restore your sources
         run: |
           [ -f "_main.dart" ] && mv -f _main.dart lib/main.dart || true
           [ -f "_pubspec.yaml" ] && mv -f _pubspec.yaml pubspec.yaml || true
-          echo "== Tree =="
-          ls -la
-          ls -la lib
-          ls -la android
+          echo "== TREE (top) ==" && ls -la
+          echo "== lib/ ==" && ls -la lib
+          echo "== android/ ==" && ls -la android
 
       - name: Flutter pub get
         run: flutter pub get
 
-      # Installe explicitement les composants Android SDK requis
       - name: Install Android SDK components
         run: |
           SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
           yes | "${SDKMANAGER}" --licenses
           yes | "${SDKMANAGER}" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
-      # S'assure que gradlew est exécutable
       - name: Ensure gradlew is executable
         run: chmod +x android/gradlew
 
-      # Build debug (diagnostic), puis release
-      - name: Build APK (debug)
-        run: flutter build apk --debug -v
+      - name: Doctor & versions
+        run: |
+          flutter --version
+          flutter doctor -v
+          (cd android && ./gradlew -v)
 
-      - name: Build APK (release)
-        run: flutter build apk --release -v
+      # ===== Build DEBUG + capture des logs =====
+      - name: Build APK (debug) – capture logs
+        run: |
+          set -o pipefail
+          flutter build apk --debug -v 2>&1 | tee debug-build.log
 
-      - name: Upload APK artifact (release)
+      # ===== Build RELEASE si debug OK =====
+      - name: Build APK (release) – capture logs
+        if: success()
+        run: |
+          set -o pipefail
+          flutter build apk --release -v 2>&1 | tee release-build.log
+
+      # ===== Toujours uploader les logs, et l'APK si succès =====
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-build-logs
+          path: |
+            debug-build.log
+            release-build.log
+
+      - name: Upload APK (release)
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: mattajirs-app-release-apk

@@ -1,4 +1,4 @@
-name: Build Android APK (with full logs)
+name: Build Android APK (robust)
 
 on:
   workflow_dispatch:
@@ -28,60 +28,96 @@ jobs:
           flutter-version: '3.24.0'
           channel: stable
 
-      # Si tu avais main.dart / pubspec.yaml à la racine, on les garde, puis on crée un projet propre
-      - name: Stash sources if present
+      # Si tu avais main.dart/pubspec.yaml à la racine, on les sauvegarde
+      - name: Stash sources (if present)
         run: |
           [ -f "main.dart" ] && mv -f main.dart _main.dart || true
           [ -f "pubspec.yaml" ] && mv -f pubspec.yaml _pubspec.yaml || true
 
+      # Crée un squelette Flutter propre
       - name: Create fresh Flutter app
         run: flutter create app
 
-      - name: Move skeleton to repo root
+      # Remonte le squelette au root
+      - name: Move skeleton to root
         run: |
           shopt -s dotglob
           mv -f app/* .
           rmdir app
 
+      # Restaure tes fichiers par-dessus (si présents)
       - name: Restore your sources
         run: |
           [ -f "_main.dart" ] && mv -f _main.dart lib/main.dart || true
           [ -f "_pubspec.yaml" ] && mv -f _pubspec.yaml pubspec.yaml || true
+          echo "== TREE =="
           ls -la; ls -la lib; ls -la android
 
       - name: Flutter pub get
         run: flutter pub get
 
-      # 👉 Patch: forcer mavenCentral() dans build.gradle et settings.gradle
-      - name: Ensure mavenCentral repositories
+      # ⚙️ Patch Gradle: mavenCentral() partout + SDK versions
+      - name: Patch Gradle repositories and SDK versions
         run: |
           set -e
-          # build.gradle (buildscript + allprojects)
-          BG="android/build.gradle"
-          if [ -f "$BG" ]; then
-            awk 'BEGIN{bs=0;ap=0}
-                 /buildscript[[:space:]]*\{/ {bs=1}
-                 /allprojects[[:space:]]*\{/ {ap=1}
-                 {print}
-                 bs && /repositories[[:space:]]*\{/ {print "        mavenCentral()"; bs=0}
-                 ap && /repositories[[:space:]]*\{/ {print "        mavenCentral()"; ap=0}
-            ' "$BG" > tmp && mv tmp "$BG"
-          fi
-
-          # settings.gradle (pluginManagement + dependencyResolutionManagement)
+          # 1) settings.gradle => mavenCentral() dans les 2 blocs
           SG="android/settings.gradle"
           if [ -f "$SG" ]; then
-            # ajoute mavenCentral() si absent dans chacun des blocs
-            grep -q "pluginManagement" "$SG" || true
+            awk '{
+              print;
+            }' "$SG" > tmp && mv tmp "$SG"
+            # Inject mavenCentral si absent
             sed -i '0,/pluginManagement[[:space:]]*{/{/pluginManagement[[:space:]]*{/!b;:a;n;/repositories[[:space:]]*{/!ba;n;/mavenCentral()/!i\        mavenCentral()' "$SG" || true
             sed -i '0,/dependencyResolutionManagement[[:space:]]*{/{/dependencyResolutionManagement[[:space:]]*{/!b;:a;n;/repositories[[:space:]]*{/!ba;n;/mavenCentral()/!i\        mavenCentral()' "$SG" || true
           fi
 
-          echo "===== settings.gradle ====="
-          sed -n '1,120p' android/settings.gradle || true
-          echo "===== build.gradle ====="
-          sed -n '1,160p' android/build.gradle || true
+          # 2) android/build.gradle => buildscript + allprojects => mavenCentral()
+          BG="android/build.gradle"
+          if [ -f "$BG" ]; then
+            # Ajoute mavenCentral() dans les blocs repositories s'il manque
+            awk '1' "$BG" > tmp && mv tmp "$BG"
+            if ! grep -q "buildscript" "$BG"; then
+              echo "buildscript { repositories { google(); mavenCentral() } }" | cat - "$BG" > tmp && mv tmp "$BG"
+            else
+              sed -i '/buildscript[[:space:]]*{/,/}/ {/repositories[[:space:]]*{/{n; /mavenCentral()/! s/repositories[[:space:]]*{/repositories {\
+        mavenCentral()/
+              }}' "$BG" || true
+            fi
+            if ! grep -q "allprojects" "$BG"; then
+              printf "\nallprojects { repositories { google(); mavenCentral() } }\n" >> "$BG"
+            else
+              sed -i '/allprojects[[:space:]]*{/,/}/ {/repositories[[:space:]]*{/{n; /mavenCentral()/! s/repositories[[:space:]]*{/repositories {\
+        mavenCentral()/
+              }}' "$BG" || true
+            fi
+          fi
 
+          # 3) android/app/build.gradle => compileSdk/targetSdk/minSdk
+          APP="android/app/build.gradle"
+          if [ -f "$APP" ]; then
+            # compileSdk
+            if grep -q "compileSdkVersion" "$APP"; then
+              sed -i 's/compileSdkVersion[[:space:]]*[0-9][0-9]*/compileSdkVersion 34/' "$APP"
+            else
+              sed -i '0,/android[[:space:]]*{/{/android[[:space:]]*{/a \    compileSdkVersion 34' "$APP"
+            fi
+            # defaultConfig block
+            if ! grep -q "defaultConfig" "$APP"; then
+              sed -i '0,/android[[:space:]]*{/{/android[[:space:]]*{/a \    defaultConfig {\n        minSdkVersion 21\n        targetSdkVersion 34\n    }' "$APP"
+            else
+              sed -i '/defaultConfig[[:space:]]*{/,/}/ s/minSdkVersion[[:space:]]*[0-9][0-9]*/minSdkVersion 21/' "$APP"
+              sed -i '/defaultConfig[[:space:]]*{/,/}/ s/targetSdkVersion[[:space:]]*[0-9][0-9]*/targetSdkVersion 34/' "$APP"
+            fi
+          fi
+
+          echo "===== settings.gradle (head) ====="
+          sed -n '1,160p' android/settings.gradle || true
+          echo "===== build.gradle (head) ====="
+          sed -n '1,200p' android/build.gradle || true
+          echo "===== app/build.gradle (head) ====="
+          sed -n '1,220p' android/app/build.gradle || true
+
+      # Installe explicitement SDK Android requis
       - name: Install Android SDK components
         run: |
           SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
@@ -97,17 +133,20 @@ jobs:
           flutter doctor -v
           (cd android && ./gradlew -v)
 
+      # Build DEBUG (diagnostic) + logs
       - name: Build APK (debug) – capture logs
         run: |
           set -o pipefail
           flutter build apk --debug -v 2>&1 | tee debug-build.log
 
+      # Build RELEASE (si debug OK) + logs
       - name: Build APK (release) – capture logs
         if: success()
         run: |
           set -o pipefail
           flutter build apk --release -v 2>&1 | tee release-build.log
 
+      # Toujours uploader les logs
       - name: Upload build logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -117,6 +156,7 @@ jobs:
             debug-build.log
             release-build.log
 
+      # Uploader l’APK si succès
       - name: Upload APK (release)
         if: success()
         uses: actions/upload-artifact@v4

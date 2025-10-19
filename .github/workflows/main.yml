@@ -1,0 +1,53 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, principal, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+
+      # Sauvegarde tes fichiers (tu les as à la racine)
+      - name: Stash app sources
+        run: |
+          mv main.dart _main.dart
+          mv pubspec.yaml _pubspec.yaml
+
+      # Crée le squelette Flutter (android/, ios/, lib/, etc.)
+      - name: Create Flutter skeleton
+        run: flutter create .
+
+      # Restaure tes fichiers dans la bonne structure
+      - name: Restore sources into skeleton
+        run: |
+          mv _main.dart lib/main.dart
+          mv _pubspec.yaml pubspec.yaml
+
+      - name: Get packages
+        run: flutter pub get
+
+      - name: Build APK (release)
+        run: flutter build apk --release
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mattajirs-app-release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
